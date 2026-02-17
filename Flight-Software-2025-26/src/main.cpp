@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "sensing.cpp"
 
 // --  STATE MACHINE -- 
 
@@ -25,8 +26,9 @@ enum class MissionState : uint8_t { // each of these states uses (7,4) hamming c
 // put function declarations here:
 int myFunction(int, int);
 
-void setup() {
-  // put your setup code here, to run once:
+void setup() {   //  setup code here, to run once:
+Serial.begin(115200);
+while (!Serial); // Wait for the serial monitor to open
 
 }
 void loop() {
