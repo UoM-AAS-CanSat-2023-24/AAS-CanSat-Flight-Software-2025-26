@@ -27,12 +27,16 @@ enum class MissionState : uint8_t { // each of these states uses (7,4) hamming c
 int myFunction(int, int);
 
 void setup() {   //  setup code here, to run once:
-Serial.begin(115200);
-while (!Serial); // Wait for the serial monitor to open
+  
+  // Initialize Serial communication for debugging
+  Serial.begin(115200); 
+  while (!Serial) { delay(10); }
+  Serial.println("Initializing sensors...");
 
 }
+
+
 void loop() {
-  // put your main code here, to run repeatedly:
 
   switch(fsw_state){ 
 

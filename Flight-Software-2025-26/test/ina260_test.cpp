@@ -1,6 +1,6 @@
 #include <Adafruit_INA260.h>
 
-Adafruit_INA260 ina260 = Adafruit_INA260();
+Adafruit_INA260 ina260 = Adafruit_INA260(); // Create an instance of the INA260 class and initialize it with the default I2C address and Wire library.
 
 void setup() {
   Serial.begin(115200);
