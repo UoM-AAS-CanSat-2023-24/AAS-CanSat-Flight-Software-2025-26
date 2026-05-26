@@ -1,8 +1,5 @@
 #include <Arduino.h> // make sure to declare functions before they are used, since platformio uses python to interpret before compiling
 #include "sensing.cpp"
-
-
-#include "sensing.cpp"
 //#include "recovery.cpp"
 //#include "telemetry.cpp"
 //#include "motor_control.cpp"  
