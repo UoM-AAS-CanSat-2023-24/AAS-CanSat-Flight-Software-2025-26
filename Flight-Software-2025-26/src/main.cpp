@@ -7,30 +7,35 @@
 //   - No sensors, no libraries, no dependencies - just UART
 //
 // Wiring:
-//   Teensy TX3 (pin 14) -> XBee DIN
-//   Teensy RX3 (pin 15) -> XBee DOUT
+//   Teensy TX6 (pin 24) -> XBee DIN
+//   Teensy RX6 (pin 25) -> XBee DOUT
 //   XBee VCC -> 3.3V, XBee GND -> GND
 //
 // XBee must already be configured with:
 //   Baud: 115200, NETID: 1079, API mode: transparent (AT mode)
 //   Both the CanSat XBee and ground station XBee need matching NETID
 
+#include <Arduino.h>
+#include <stdint.h>
+
 #define TEAM_ID "1079"
 #define XBEE_BAUD 115200
+
 
 uint32_t packet_count = 0;
 
 void setup() {
-    Serial.begin(115200);   // USB - for monitoring on your PC
-    Serial3.begin(XBEE_BAUD); // XBee
+  Serial.begin(115200);   // USB - for monitoring on your PC
+  Serial6.begin(XBEE_BAUD); // XBee
 
-    // Wait for USB serial to come up (optional, remove for standalone testing)
-    while (!Serial && millis() < 3000);
+  // Wait for USB serial to come up (optional, remove for standalone testing)
+  while (!Serial && millis() < 3000); // wait up to 3 seconds for USB serial connection
 
-    Serial.println("=== Telemetry link test starting ===");
-    Serial.println("Sending 1 packet/sec. Check ground station for received packets.");
-    Serial.println();
+  Serial.println("=== Telemetry link test starting ===");
+  Serial.println("Sending 1 packet/sec. Check ground station for received packets.");
+  Serial.println();
 }
+
 
 void loop() {
     char packet[256];
@@ -49,11 +54,11 @@ void loop() {
         "00:00:00,0.0,0.0000,0.0000,0,"
         "NONE\n",
         TEAM_ID,
-        (unsigned long)(millis() / 1000) % 60,
+        (unsigned long)(millis() / 1000) % 60, // MISSION_TIME (dummy value, cycles 00:00:00 to 00:00:59)
         packet_count
     );
 
-    Serial3.print(packet);  // -> XBee -> ground station
+    Serial6.print(packet);  // -> XBee -> ground station
     Serial.print(packet);   // -> USB serial monitor (so you can verify locally too)
 
     packet_count++;
