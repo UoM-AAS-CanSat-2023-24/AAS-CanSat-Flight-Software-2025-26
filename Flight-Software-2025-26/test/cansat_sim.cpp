@@ -20,9 +20,6 @@
  *   - Intentionally drifts sensor values to look realistic
  */
 
-#include <Arduino.h>
-#include <cstdlib>
-
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
@@ -590,5 +587,5 @@ void printStatus(const String& msg) {
 }
 
 float randomFloat(float lo, float hi) {
-  return lo + (float)rand() / RAND_MAX * (hi - lo);
+  return lo + (float)random(0, 10000) / 10000.0 * (hi - lo);
 }
