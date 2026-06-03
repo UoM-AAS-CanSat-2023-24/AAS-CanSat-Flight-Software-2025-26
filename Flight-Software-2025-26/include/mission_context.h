@@ -8,7 +8,7 @@
 
 #pragma once
 #include <Arduino.h>
-#include "sensing.cpp"   // SensorData
+#include "sensing.h"  // SensorData
 
 // ============================================================================
 //  State machine
@@ -27,7 +27,7 @@ enum class MissionState : uint8_t {
   FAULT                       = 255
 };
 
-inline const char* state_name(MissionState s) {
+inline const char* state_name(MissionState s) { // Returns the ASCII string transmitted in telemetry STATE field
   switch (s) {
     case MissionState::LAUNCH_PAD_DISARMED:         return "LAUNCH_PAD_DISARMED";
     case MissionState::LAUNCH_PAD_ARMED:            return "LAUNCH_PAD_ARMED";
@@ -45,7 +45,13 @@ inline const char* state_name(MissionState s) {
 }
 
 // ============================================================================
-//  FSW flags
+//  FSW flags (bit 7-0, MSB to LSB) — all persisted in EEPROM and transmitted in telemetry
+// Bit 7 = CX (telemetry TX) ON/OFF
+// Bit 6 = SIM mode ENABLED (set by GCS command, persists across power cycles, allows ACTIVATE)
+// Bit 5 = SIM mode ACTIVE (set by GCS command, overrides sensor altitude with SIMP value)
+// Bit 4 = PAYLOAD released
+// Bit 3 = PROBE (egg) released
+// Bit 2-0 = reserved for future use
 // ============================================================================
 #define FLAG_CX_ON            (1u << 7)
 #define FLAG_SIM_ENABLED      (1u << 6)
@@ -71,5 +77,5 @@ struct MissionContext {
   // Convenience flag accessors
   inline bool cx_on()      const { return flags & FLAG_CX_ON; }
   inline bool sim_active() const { return flags & FLAG_SIM_ACTIVE; }
-  inline char mode_char()  const { return sim_active() ? 'S' : 'F'; }
+  inline char mode_char()  const { return sim_active() ? 'S' : 'F'; } // 'S' for SIM mode, 'F' for real flight
 };

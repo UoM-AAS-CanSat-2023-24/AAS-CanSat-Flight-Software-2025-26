@@ -1,131 +1,235 @@
-#pragma once 
-#include <Arduino.h>
-#include <XBee.h>
-#include "sensing.cpp" // needed for GPS-based stuff
+/*
+ * CanSat 2026 — Team 1079
+ * telemetry.cpp  |  Packet transmission and uplink command parsing
+ *
+ * send_telemetry_packet() — builds the full CSV packet and sends via XBee,
+ *   then writes the same line to SD regardless of CX flag.
+ *
+ * parse_commands() — drains XBee RX buffer one line at a time and handles:
+ *   CMD,1079,CX,ON|OFF
+ *   CMD,1079,ST,hh:mm:ss|GPS
+ *   CMD,1079,CAL
+ *   CMD,1079,SIM,ENABLE|ACTIVATE|DISABLE
+ *   CMD,1079,SIMP,<pressure_Pa>
+ *   CMD,1079,MEC,ARM,ON        (custom: DISARMED → ARMED)
+ *   CMD,1079,MEC,PAYLOAD,ON
+ *   CMD,1079,MEC,PROBE,ON
+ */
 
-// Team ID for CanSat 2026 - Team 1079
-#define TEAM_ID "1079"
- 
-// Telemetry output via Serial3 (XBee Pro S2C connected here per PCB layout)
-// Baud rate 115200 to match XBee Pro S2C config
+#include "telemetry.h"
+#include "config.h"
+#include "eeprom_store.h"
+#include "sd_card.h"
+#include "sensing.h"
+#include "servo_control.h"
+#include "camera_ctrl.h"
+#include "mavlink_handler.h"
 
-char received_telemetry_raw[60] = {};
+// ============================================================================
+//  send_telemetry_packet
+// ============================================================================
+void send_telemetry_packet(MissionContext& ctx, RV3028& rtc) {
+  // Mission time from RV3028
+  char mission_time[12];
+  snprintf(mission_time, sizeof(mission_time),
+           "%02d:%02d:%02d", rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
 
-bool telemetry_setup(){
-    // Initialize Serial communication for telemetry
-    Serial.begin(115200);
-    while (!Serial) { delay(10); }
-    return true; // telemetry setup successful
+  // GPS time (populated from MAVLink MSG #33)
+  char gps_time[12];
+  snprintf(gps_time, sizeof(gps_time),
+           "%02d:%02d:%02d",
+           ctx.sd.gps_hour, ctx.sd.gps_min, ctx.sd.gps_sec);
+
+  // ACTIVE_MECHS bitmask
+  uint8_t active_mechs = 0;
+  if (ctx.flags & FLAG_PAYLOAD_RELEASED) active_mechs |= 0x01;
+  if (ctx.flags & FLAG_PROBE_RELEASED)   active_mechs |= 0x02;
+
+  char buf[384];
+  snprintf(buf, sizeof(buf),
+    "%s,"          // TEAM_ID
+    "%s,"          // MISSION_TIME
+    "%lu,"         // PACKET_COUNT
+    "%c,"          // MODE  F/S
+    "%s,"          // STATE
+    "%.1f,"        // ALTITUDE  m AGL
+    "%.1f,"        // TEMPERATURE  °C  (LM335AZ)
+    "%.2f,"        // PRESSURE  kPa
+    "%.2f,"        // VOLTAGE  V
+    "%.3f,"        // CURRENT  A
+    "%.2f,%.2f,%.2f,"     // GYRO_R,P,Y  °/s
+    "%.2f,%.2f,%.2f,"     // ACCEL_R,P,Y  raw counts
+    "%s,"          // GPS_TIME
+    "%.1f,"        // GPS_ALTITUDE  m AMSL
+    "%.4f,"        // GPS_LATITUDE
+    "%.4f,"        // GPS_LONGITUDE
+    "%u,"          // GPS_SATS
+    "%s,"          // CMD_ECHO
+    "%s,"          // SUBSTATE  (mirrors STATE until sub-states are added)
+    "%.1f,"        // MAIN_SOC  % (placeholder)
+    "%.2f,"        // BUS_POWER  W
+    "%u,"          // ACTIVE_MECHS  bitmask
+    "%u,"          // ACTIVE_CAMERA  bitmask
+    "%u\r",        // MATEK  1=heartbeat OK
+    TEAM_ID_STR,
+    mission_time,
+    (unsigned long)ctx.packet_count,
+    ctx.mode_char(),
+    state_name(ctx.state),
+    ctx.sd.altitude_m,
+    ctx.sd.ext_temp_c,
+    ctx.sd.pressure_kpa,
+    ctx.sd.voltage_v,
+    ctx.sd.current_a,
+    ctx.sd.gyro_r, ctx.sd.gyro_p, ctx.sd.gyro_y,
+    ctx.sd.accel_r, ctx.sd.accel_p, ctx.sd.accel_y,
+    gps_time,
+    ctx.sd.gps_alt_m,
+    ctx.sd.gps_lat,
+    ctx.sd.gps_lon,
+    ctx.sd.gps_sats,
+    ctx.cmd_echo,
+    state_name(ctx.state),
+    0.0f,                       // MAIN_SOC placeholder
+    ctx.sd.bus_power_w,
+    active_mechs,
+    camera_active_flags(),
+    matek_heartbeat_ok()
+  );
+
+  if (ctx.cx_on()) {
+    XBEE_SERIAL.print(buf);
+  }
+
+  sd_write_line(buf);
+  ctx.packet_count++;
 }
 
-// -------------------------------------------------------
-// SENSOR INDEX MAP (sensor_readings[] array)
-// These match the indices used in sensing.cpp - update if
-// sensing.cpp changes its array layout.
-// -------------------------------------------------------
-// [0]  altitude_baro   - barometric altitude (m, relative to ground, from Matek F405 SPL06-001)
-// [1]  temperature     - LM335AZ temperature (°C)
-// [2]  pressure        - barometric pressure (Pa, /1000 → kPa in telemetry)
-// [3]  voltage         - INA260 bus voltage (mV, /1000 → V in telemetry)
-// [4]  current         - INA260 bus current (mA, /1000 → A in telemetry)
-// [5]  gyro_r          - ICM-20948 gyro roll   (°/s, via Matek F405)
-// [6]  gyro_p          - ICM-20948 gyro pitch  (°/s)
-// [7]  gyro_y          - ICM-20948 gyro yaw    (°/s)
-// [8]  accel_r         - ICM-20948 accel roll  (m/s²)
-// [9]  accel_p         - ICM-20948 accel pitch (m/s²)
-// [10] accel_y         - ICM-20948 accel yaw   (m/s²)
-// [11] airspeed        - MS4525DO airspeed (Pa, raw differential pressure)
-// [12] bus_power       - INA260 power (mW, /1000 → W in telemetry)
-// [13] main_soc        - battery state of charge (%, estimated)
-// GPS fields are passed separately (see send_telemetry signature below)
-// NOTE: Array is 14 elements - bounds checked before access
- 
-// -------------------------------------------------------
-// FSW FLAGS BYTE (fsw_flags_arg) - bit definitions
-// -------------------------------------------------------
-// Bit 7 (0x80): Mode       1 = Simulation, 0 = Flight
-// Bit 6 (0x40): Payload release mechanism state  1 = RELEASED, 0 = LATCHED
-// Bit 5 (0x20): Egg (nose cone) release state    1 = RELEASED, 0 = LATCHED
-// Bit 4 (0x10): Telemetry TX enable              1 = TX on, 0 = TX off
-// Bit 3 (0x08): Camera 1 active (payload release ESP32S3)
-// Bit 2 (0x04): Camera 2 active (ground/egg ESP32S3)
-// Bit 1 (0x02): Matek F405 online
-// Bit 0 (0x01): Spare
+// ============================================================================
+//  parse_commands
+// ============================================================================
+static char rx_buf[128];
+static int  rx_idx = 0;
 
+void parse_commands(MissionContext& ctx, RV3028& rtc) {
+  while (XBEE_SERIAL.available()) {
+    char c = (char)XBEE_SERIAL.read();
 
-// -------------------------------------------------------
-// SEND TELEMETRY
-// Produces one CSV telemetry packet per competition spec:
-//   TEAM_ID, MISSION_TIME, PACKET_COUNT, MODE, STATE,
-//   ALTITUDE, TEMPERATURE, PRESSURE, VOLTAGE, CURRENT,
-//   GYRO_R, GYRO_P, GYRO_Y, ACCEL_R, ACCEL_P, ACCEL_Y,
-//   GPS_TIME, GPS_ALTITUDE, GPS_LATITUDE, GPS_LONGITUDE, GPS_SATS,
-//   CMD_ECHO,
-//   [optional] SUBSTATE, MAIN_SOC, BUS_POWER, AIR_SPEED,
-//              ACTIVE_MECHS, ACTIVE_CAMERA, MATEK
-// -------------------------------------------------------
+    if (c == '\r' || c == '\n') {
+      if (rx_idx == 0) continue;
+      rx_buf[rx_idx] = '\0';
+      rx_idx = 0;
 
+      char* tok = strtok(rx_buf, ",");
+      if (!tok || strcmp(tok, "CMD") != 0)  goto done;
 
-void send_telemetry(
-    float sensor_readings[14],
-    uint32_t state,
-    char command_echo[60],
-    uint8_t fsw_flags_arg,
-    // GPS fields (read from PA1616D via Matek F405 UART)
-    char gps_time[10],       // "HH:MM:SS"
-    float gps_altitude,      // metres AMSL
-    float gps_latitude,      // decimal degrees N
-    float gps_longitude,     // decimal degrees W
-    uint8_t gps_sats,
-    // Matek F405 flight controller state string (e.g. "GLIDER", "MANUAL")
-    char matek_state[20]
-){
+      tok = strtok(nullptr, ",");           // TEAM_ID
+      if (!tok || atoi(tok) != TEAM_ID_INT) goto done;
 
-    char mode = ((fsw_flags_arg & 0x80) >= 1) ? 'S' : 'F'; // S = Simulation, F = Flight
+      tok = strtok(nullptr, ",");           // command keyword
+      if (!tok) goto done;
 
-        // --- Mechanism state string (ACTIVE_MECHS field) ---
-    // Encode which servos/mechanisms are latched:
-    // digit 1 = payload release servo (SG90)
-    // digit 2 = port steering servo (TR-1160A)
-    // digit 3 = starboard steering servo (TR-1160A)
-    // digit 4 = egg release servo (SG90)
-    // '1' = RELEASED/ACTIVE, '0' = LATCHED/INACTIVE
-    char active_mechs[5];
-    active_mechs[0] = ((fsw_flags_arg & 0x40) >= 1) ? '1' : '0'; // payload released
-    active_mechs[1] = '0'; // port servo - expand when servo_state tracking added
-    active_mechs[2] = '0'; // starboard servo
-    active_mechs[3] = ((fsw_flags_arg & 0x20) >= 1) ? '1' : '0'; // egg released
-    active_mechs[4] = '\0';
+      // CX ------------------------------------------------------------------
+      if (strcmp(tok, "CX") == 0) {
+        char* p = strtok(nullptr, ",");
+        if (!p) goto done;
+        if (strcmp(p, "ON") == 0) {
+          ctx.flags |= FLAG_CX_ON;
+          ctx.packet_count = 0;
+          eeprom_save(ctx);
+          strncpy(ctx.cmd_echo, "CXON",  31);
+        } else {
+          ctx.flags &= ~FLAG_CX_ON;
+          strncpy(ctx.cmd_echo, "CXOFF", 31);
+        }
+      }
 
+      // ST ------------------------------------------------------------------
+      else if (strcmp(tok, "ST") == 0) {
+        char* p = strtok(nullptr, ",");
+        if (!p) goto done;
+        if (strcmp(p, "GPS") == 0) {
+          rtc.setTime(ctx.sd.gps_sec, ctx.sd.gps_min, ctx.sd.gps_hour,
+                      1, 1, 1, 25);
+        } else {
+          int hh = 0, mm = 0, ss = 0;
+          if (sscanf(p, "%d:%d:%d", &hh, &mm, &ss) == 3) {
+            rtc.setTime((uint8_t)ss, (uint8_t)mm, (uint8_t)hh,
+                        1, 1, 1, 25);
+          }
+        }
+        strncpy(ctx.cmd_echo, "ST", 31);
+      }
 
+      // CAL -----------------------------------------------------------------
+      else if (strcmp(tok, "CAL") == 0) {
+        calibrate_ground(ctx.sd, ctx.ground_alt_m);
+        eeprom_save(ctx);
+        strncpy(ctx.cmd_echo, "CAL", 31);
+      }
 
+      // SIM -----------------------------------------------------------------
+      else if (strcmp(tok, "SIM") == 0) {
+        char* p = strtok(nullptr, ",");
+        if (!p) goto done;
+        if (strcmp(p, "ENABLE") == 0) {
+          ctx.flags |=  FLAG_SIM_ENABLED;
+          ctx.flags &= ~FLAG_SIM_ACTIVE;
+          strncpy(ctx.cmd_echo, "SIMEN",  31);
+        } else if (strcmp(p, "ACTIVATE") == 0) {
+          if (ctx.flags & FLAG_SIM_ENABLED) {
+            ctx.flags |= FLAG_SIM_ACTIVE;
+            strncpy(ctx.cmd_echo, "SIMACT", 31);
+          }
+        } else if (strcmp(p, "DISABLE") == 0) {
+          ctx.flags &= ~(FLAG_SIM_ENABLED | FLAG_SIM_ACTIVE);
+          strncpy(ctx.cmd_echo, "SIMDIS", 31);
+        }
+        eeprom_save(ctx);
+      }
 
+      // SIMP ----------------------------------------------------------------
+      else if (strcmp(tok, "SIMP") == 0) {
+        char* p = strtok(nullptr, ",");
+        if (p && (ctx.flags & FLAG_SIM_ACTIVE)) {
+          ctx.sd.sim_pressure_pa = (float)atol(p);
+          strncpy(ctx.cmd_echo, "SIMP", 31);
+        }
+      }
+
+      // MEC -----------------------------------------------------------------
+      else if (strcmp(tok, "MEC") == 0) {
+        char* device = strtok(nullptr, ",");
+        char* onoff  = strtok(nullptr, ",");
+        if (!device || !onoff) goto done;
+
+        if (strcmp(device, "ARM") == 0 && strcmp(onoff, "ON") == 0) {
+          if (ctx.state == MissionState::LAUNCH_PAD_DISARMED) {
+            ctx.state = MissionState::LAUNCH_PAD_ARMED;
+            eeprom_save(ctx);
+          }
+          strncpy(ctx.cmd_echo, "MECARM", 31);
+
+        } else if (strcmp(device, "PAYLOAD") == 0 && strcmp(onoff, "ON") == 0) {
+          payload_release_actuate();
+          ctx.flags |= FLAG_PAYLOAD_RELEASED;
+          eeprom_save(ctx);
+          strncpy(ctx.cmd_echo, "MECPAY", 31);
+
+        } else if (strcmp(device, "PROBE") == 0 && strcmp(onoff, "ON") == 0) {
+          egg_release_actuate();
+          ctx.flags |= FLAG_PROBE_RELEASED;
+          eeprom_save(ctx);
+          strncpy(ctx.cmd_echo, "MECPRB", 31);
+        }
+      }
+
+      done:;
+
+    } else {
+      if (rx_idx < (int)sizeof(rx_buf) - 1) {
+        rx_buf[rx_idx++] = c;
+      }
+    }
+  }
 }
-
-bool send_telemetry(float sensor_readings[21],uint32_t state, char command_echo[30], uint8_t fsw_flags_arg){
-    
-    char substate[15];
-    //Serial.println("I'm try to send telemetry");
-    time_t time = now(); 
-    static int s_packet_count = 0;// static means that it doesn't reset when function goes out of scope i.e. it will keep its value until the MC resets. the s_ at the start is a nice reminder to programmers that it's static
-    char sBuf[750]; // a buffer for the data telemetry 
-    char mode;
-    char ascii_state[13];
-    char release_mech_state[10];
-    
-    
-    
-    // Send telemetry data over Serial
-    Serial.print("Latitude: ");
-    Serial.print(gps_data.latitude, 6);
-    Serial.print(", Longitude: ");
-    Serial.print(gps_data.longitude, 6);
-    Serial.print(", Altitude: ");
-    Serial.print(gps_data.altitude);
-    Serial.print(" m, Speed: ");
-    Serial.print(gps_data.speed);
-    Serial.println(" m/s");
-    
-    return true; // telemetry sent successfully
-}
-

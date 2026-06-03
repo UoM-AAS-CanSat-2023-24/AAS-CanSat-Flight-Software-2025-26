@@ -32,15 +32,16 @@
 #include <Wire.h>
 #include <EEPROM.h>
 #include <RV-3028-C7.h>
-
-#include "config.h"
-#include "mission_context.h"
-#include "sensing.h"
+ 
+#include "config.h" // compile-time constants
+#include "mission_context.h" // MissionContext struct, MissionState enum, state_name()
+#include "sensing.h" // SensorData struct, sensor_setup(), read_local_sensors()
 #include "mavlink_handler.h"
 #include "flight_logic.h"
 #include "telemetry.h"
 #include "eeprom_store.h"
 #include "servo_control.h"
+
 #include "camera_ctrl.h"
 #include "sd_card.h"
 
