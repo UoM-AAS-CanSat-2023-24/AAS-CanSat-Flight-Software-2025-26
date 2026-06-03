@@ -36,14 +36,13 @@
 #include "config.h" // compile-time constants
 #include "mission_context.h" // MissionContext struct, MissionState enum, state_name()
 #include "sensing.h" // SensorData struct, sensor_setup(), read_local_sensors()
-#include "mavlink_handler.h"
-#include "flight_logic.h"
-#include "telemetry.h"
-#include "eeprom_store.h"
+#include "flight_logic.h" // launch_detected(), grounded_detected()
+#include "eeprom_store.h" // eeprom_restore(), eeprom_save()
 #include "servo_control.h"
-
-#include "camera_ctrl.h"
+#include "telemetry.h"
 #include "sd_card.h"
+#include "camera_ctrl.h"
+#include "mavlink_handler.h"
 
 //  Globals — one context object and the RTC. That's it.
 MissionContext ctx;
@@ -127,7 +126,7 @@ void setup() {
 }
 
 void loop() {
-  uint32_t now = millis();
+  uint32_t now = millis(); 
 
   // 1. GCS commands — checked every iteration 
   parse_commands(ctx, rtc);

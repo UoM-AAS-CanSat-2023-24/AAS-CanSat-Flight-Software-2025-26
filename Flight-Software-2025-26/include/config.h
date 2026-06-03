@@ -6,7 +6,7 @@
  */
 
 #pragma once
-#include <Arduino.h>
+#include <Arduino.h>"
 
 // ============================================================================
 //  Team / Mission identity
@@ -58,3 +58,7 @@ const int   LANDING_CONFIRM_COUNT  = 2;        // consecutive readings
 // ============================================================================
 const uint32_t TELEM_INTERVAL_MS   = 1000;   // 1 Hz telemetry
 const uint32_t EEPROM_SAVE_MS      = 5000;   // periodic EEPROM flush
+
+// Camera trigger pins (digital HIGH = record, LOW = stop)
+const int PIN_CAM_RELEASE = 9;   // change to your actual pin
+const int PIN_CAM_GROUND  = 10;  // change to your actual pin
