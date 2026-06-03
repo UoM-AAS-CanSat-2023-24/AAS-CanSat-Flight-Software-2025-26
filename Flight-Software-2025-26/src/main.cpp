@@ -81,7 +81,7 @@ void setup() {
   if (!rtc.begin()) {
     Serial.println(F("[RTC] RV3028 not found — awaiting ST command"));
   } else {
-    rtc.set24HourMode();
+    rtc.set24Hour();
     Serial.println(F("[RTC] RV3028 OK"));
   }
 
