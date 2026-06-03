@@ -7,7 +7,6 @@
  */
 
 #pragma once
-#include "flight_logic.h"
 #include "config.h"
 #include "mission_context.h"
 

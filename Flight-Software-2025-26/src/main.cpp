@@ -67,13 +67,7 @@ inline bool is_pre_launch() {
   return ctx.state == MissionState::LAUNCH_PAD_DISARMED ||
          ctx.state == MissionState::LAUNCH_PAD_ARMED;
 }
-inline bool is_descent(MissionState s) {
-  return s == MissionState::DESCENT_PRE_PAYLOAD_RELEASE ||
-         s == MissionState::DESCENT_PAYLOAD_RELEASE     ||
-         s == MissionState::DESCENT_PRE_PROBE_RELEASE   ||
-         s == MissionState::DESCENT_PROBE_RELEASE       ||
-         s == MissionState::DESCENT_POST_PROBE_RELEASE;
-}
+
 
 
 void setup() {

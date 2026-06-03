@@ -11,7 +11,7 @@
 #pragma once
 #include "mission_context.h"
 #include "config.h"
-#include <MAVlink.h>
+#include <mavlink.h>
 
 static mavlink_message_t mav_msg;
 static mavlink_status_t  mav_status;
